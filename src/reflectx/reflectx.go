@@ -4,7 +4,7 @@
 package reflectx
 
 import (
-	_ "github.com/yoyofxteam/yoyodata/src/model"
+	"fmt"
 	"reflect"
 	"runtime"
 	"strings"
@@ -74,7 +74,7 @@ type kinder interface {
 /**
 判断是否是结构体类型
 */
-func mustBeStruct(v kinder, expected reflect.Kind) {
+func mustBeKind(v kinder, expected reflect.Kind) {
 	if k := v.Kind(); k != expected {
 		panic(reflect.ValueError{Method: getStackInfo(), Kind: k})
 	}
@@ -95,13 +95,44 @@ func getStackInfo() string {
 	return stockInfo.String()
 }
 
-func (m *Mapper) TypeMap(t reflect.Type) *Mapper {
+func (m *Mapper) TypeMap(t reflect.Type) *StructMap {
 	m.mutex.Lock()
-	mapping, ok := m.cache[t]
+	structMap, ok := m.cache[t]
 	if !ok {
-		mapping =
+		structMap = getMapping(t, m.tagName, m.mapFunc, m.tagMapFunc)
+		m.cache[t] = structMap
 	}
+	m.mutex.Unlock()
+	return structMap
+}
 
+func (m *Mapper) FieldByName(v reflect.Value, name string) reflect.Value {
+	v = reflect.Indirect(v)
+	mustBeKind(v, reflect.Struct)
+	fmt.Println(v.Type())
+	typeMap := m.TypeMap(v.Type())
+	fieldInfo, ok := typeMap.Names[name]
+	if !ok {
+		return v
+	}
+	return FieldByIndexes(v, fieldInfo.Index)
+}
+
+func FieldByIndexes(v reflect.Value, indexes []int) reflect.Value {
+	for _, i := range indexes {
+		//获取街机构体的字段
+		v = reflect.Indirect(v).Field(i)
+
+		//如果是指针或者空值的话赋值一个默认类型
+		if v.Kind() == reflect.Ptr && v.IsNil() {
+			alloc := reflect.New(parsePtrToElem(v.Type()))
+			v.Set(alloc)
+		}
+		if v.Kind() == reflect.Map && v.IsNil() {
+			v.Set(reflect.MakeMap(v.Type()))
+		}
+	}
+	return v
 }
 
 /**
@@ -112,7 +143,7 @@ type filedMapFunc func(string) string
 /**
 把指针类型转换成指针代表的原始类型
 */
-func parsePtr(t reflect.Type) reflect.Type {
+func parsePtrToElem(t reflect.Type) reflect.Type {
 
 	//如果t类型是指针类型转换成指针代表的原始类型
 	if t.Kind() == reflect.Ptr {
@@ -178,7 +209,7 @@ func getMapping(fieldType reflect.Type, tagName string, mapFunc, tagMapFunc file
 	root := &FieldInfo{}
 	//初始化根节点
 	queue := []TypeQueue{}
-	queue = append(queue, TypeQueue{parsePtr(fieldType), root, ""})
+	queue = append(queue, TypeQueue{parsePtrToElem(fieldType), root, ""})
 	//这种写法类似于goto
 QueueLoop:
 	for len(queue) != 0 {
@@ -214,13 +245,14 @@ QueueLoop:
 				Options: parseOptions(tag),
 			}
 
+			//如果没有父级字段直接取字段名。有的话按 父.子
 			if typeQueue.parentPath == "" {
 				fieldInfo.Path = field.Name
 			} else {
 				fieldInfo.Path = typeQueue.parentPath + "." + fieldInfo.Name
 			}
 
-			//排除匿名类
+			//排除匿名类和未导出字段，当字段不大写时会被忽略
 			if len(field.PkgPath) != 0 && !field.Anonymous {
 				continue
 			}
@@ -234,15 +266,16 @@ QueueLoop:
 				fieldInfo.Embedded = true
 				fieldInfo.Index = append(typeQueue.FieldInfo.Index, filedIndex)
 				childrenFiledCount := 0
-				ft := parsePtr(field.Type)
+				ft := parsePtrToElem(field.Type)
 				if ft.Kind() == reflect.Struct {
 					childrenFiledCount = ft.NumField()
 				}
 				fieldInfo.Children = make([]*FieldInfo, childrenFiledCount)
-				queue = append(queue, TypeQueue{parsePtr(field.Type), &fieldInfo, parentPath})
+				queue = append(queue, TypeQueue{parsePtrToElem(field.Type), &fieldInfo, parentPath})
+				//如果字段的类型是结构体或者是指针的原始类型是结构体，开启下一次循环
 			} else if fieldInfo.Zero.Kind() == reflect.Struct ||
 				(fieldInfo.Zero.Kind() == reflect.Ptr && fieldInfo.Zero.Type().Elem().Kind() == reflect.Struct) {
-				queue = append(queue, TypeQueue{parsePtr(field.Type), &fieldInfo, fieldInfo.Path})
+				queue = append(queue, TypeQueue{parsePtrToElem(field.Type), &fieldInfo, fieldInfo.Path})
 			}
 			fieldInfo.Index = apnd(typeQueue.FieldInfo.Index, filedIndex)
 			fieldInfo.Parent = typeQueue.FieldInfo
