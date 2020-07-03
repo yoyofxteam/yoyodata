@@ -121,6 +121,56 @@ func parsePtr(t reflect.Type) reflect.Type {
 	return t
 }
 
+/**
+使用函数进行字段名转换
+*/
+func parseFiledName(filed reflect.StructField, tagName string, mapFunc, tagMapFunc filedMapFunc) (tag, fieldName string) {
+
+	//获取原始字段名
+	fieldName = filed.Name
+	//如果转换函数不为空进行名称转换
+	if mapFunc != nil {
+		fieldName = mapFunc(fieldName)
+	}
+	if tagName == "" {
+		return "", fieldName
+	}
+
+	if !strings.Contains(string(filed.Tag), tagName+":") {
+		return "", fieldName
+	}
+	tag = filed.Tag.Get(tagName)
+	if tagMapFunc != nil {
+		tag = tagMapFunc(tag)
+	}
+	parts := strings.Split(tag, ",")
+	fieldName = parts[0]
+	return tag, fieldName
+}
+
+func parseOptions(tag string) map[string]string {
+	parts := strings.Split(tag, ",")
+	options := make(map[string]string, len(parts))
+	if len(parts) > 1 {
+		for _, option := range parts[1:] {
+			if strings.Contains(option, "=") {
+				kv := strings.Split(option, "=")
+				options[kv[0]] = kv[1]
+				continue
+			}
+			options[option] = ""
+		}
+	}
+	return options
+}
+
+func apnd(is []int, i int) []int {
+	x := make([]int, len(is)+1)
+	copy(x, is)
+	x[len(x)-1] = i
+	return x
+}
+
 func getMapping(fieldType reflect.Type, tagName string, mapFunc, tagMapFunc filedMapFunc) *StructMap {
 
 	fildInfoItem := []*FieldInfo{}
@@ -128,7 +178,86 @@ func getMapping(fieldType reflect.Type, tagName string, mapFunc, tagMapFunc file
 	root := &FieldInfo{}
 	//初始化根节点
 	queue := []TypeQueue{}
-	queue = append(queue, TypeQueue{parsePtr(fieldType),root,""})
-loop:
+	queue = append(queue, TypeQueue{parsePtr(fieldType), root, ""})
+	//这种写法类似于goto
+QueueLoop:
+	for len(queue) != 0 {
 
+		typeQueue := queue[0]
+		queue = queue[1:]
+
+		for parent := typeQueue.FieldInfo.Parent; parent != nil; parent = parent.Parent {
+			if typeQueue.FieldInfo.Filed.Type == parent.Filed.Type {
+				continue QueueLoop
+			}
+		}
+
+		childrenFiledCount := 0
+		//如果当前类型是结构体，获取结构体的字段数量
+		if typeQueue.typeInfo.Kind() == reflect.Struct {
+			childrenFiledCount = typeQueue.typeInfo.NumField()
+		}
+		typeQueue.FieldInfo.Children = make([]*FieldInfo, childrenFiledCount)
+
+		for filedIndex := 0; filedIndex < childrenFiledCount; filedIndex++ {
+			//根据索引获取所代表结构体上的字段
+			field := typeQueue.typeInfo.Field(filedIndex)
+			//进行字段名转换
+			tag, name := parseFiledName(field, tagName, mapFunc, tagMapFunc)
+			if name == "-" {
+				continue
+			}
+			fieldInfo := FieldInfo{
+				Filed:   field,
+				Name:    name,
+				Zero:    reflect.New(field.Type),
+				Options: parseOptions(tag),
+			}
+
+			if typeQueue.parentPath == "" {
+				fieldInfo.Path = field.Name
+			} else {
+				fieldInfo.Path = typeQueue.parentPath + "." + fieldInfo.Name
+			}
+
+			//排除匿名类
+			if len(field.PkgPath) != 0 && !field.Anonymous {
+				continue
+			}
+
+			if field.Anonymous {
+				parentPath := typeQueue.parentPath
+				if tag != "" {
+					parentPath = fieldInfo.Path
+				}
+
+				fieldInfo.Embedded = true
+				fieldInfo.Index = append(typeQueue.FieldInfo.Index, filedIndex)
+				childrenFiledCount := 0
+				ft := parsePtr(field.Type)
+				if ft.Kind() == reflect.Struct {
+					childrenFiledCount = ft.NumField()
+				}
+				fieldInfo.Children = make([]*FieldInfo, childrenFiledCount)
+				queue = append(queue, TypeQueue{parsePtr(field.Type), &fieldInfo, parentPath})
+			} else if fieldInfo.Zero.Kind() == reflect.Struct ||
+				(fieldInfo.Zero.Kind() == reflect.Ptr && fieldInfo.Zero.Type().Elem().Kind() == reflect.Struct) {
+				queue = append(queue, TypeQueue{parsePtr(field.Type), &fieldInfo, fieldInfo.Path})
+			}
+			fieldInfo.Index = apnd(typeQueue.FieldInfo.Index, filedIndex)
+			fieldInfo.Parent = typeQueue.FieldInfo
+			typeQueue.FieldInfo.Children[filedIndex] = &fieldInfo
+			fildInfoItem = append(fildInfoItem, &fieldInfo)
+
+		}
+
+	}
+	fields := &StructMap{Index: fildInfoItem, Tree: root, Paths: map[string]*FieldInfo{}, Names: map[string]*FieldInfo{}}
+	for _, field := range fields.Index {
+		fields.Paths[field.Path] = field
+		if field.Name != "" && !field.Embedded {
+			fields.Names[field.Path] = field
+		}
+	}
+	return fields
 }
