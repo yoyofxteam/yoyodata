@@ -58,7 +58,7 @@ type TypeQueue struct {
 /**
 获取一个新的mapper对象
 */
-func getNewMapper(tagName string, mapFunc func(string) string) *Mapper {
+func GetNewMapper(tagName string, mapFunc func(string) string) *Mapper {
 	return &Mapper{
 		tagName: tagName,
 		mapFunc: mapFunc,
@@ -74,16 +74,16 @@ type kinder interface {
 /**
 判断是否是结构体类型
 */
-func mustBeKind(v kinder, expected reflect.Kind) {
+func MustBeKind(v kinder, expected reflect.Kind) {
 	if k := v.Kind(); k != expected {
-		panic(reflect.ValueError{Method: getStackInfo(), Kind: k})
+		panic(reflect.ValueError{Method: GetStackInfo(), Kind: k})
 	}
 }
 
 /**
 获取堆栈信息
 */
-func getStackInfo() string {
+func GetStackInfo() string {
 
 	//获取函数名，文件，行号
 	pc, file, line, _ := runtime.Caller(2)
@@ -95,20 +95,24 @@ func getStackInfo() string {
 	return stockInfo.String()
 }
 
+/**
+把Type转成StructMap
+ */
 func (m *Mapper) TypeMap(t reflect.Type) *StructMap {
 	m.mutex.Lock()
 	structMap, ok := m.cache[t]
 	if !ok {
-		structMap = getMapping(t, m.tagName, m.mapFunc, m.tagMapFunc)
+		structMap = GetMapping(t, m.tagName, m.mapFunc, m.tagMapFunc)
 		m.cache[t] = structMap
 	}
 	m.mutex.Unlock()
 	return structMap
 }
 
-func (m *Mapper) FieldByName(v reflect.Value, name string) reflect.Value {
+//根据字段名称获取字段的值
+func (m *Mapper) GetFieldByName(v reflect.Value, name string) reflect.Value {
 	v = reflect.Indirect(v)
-	mustBeKind(v, reflect.Struct)
+	MustBeKind(v, reflect.Struct)
 	fmt.Println(v.Type())
 	typeMap := m.TypeMap(v.Type())
 	fieldInfo, ok := typeMap.Names[name]
@@ -118,6 +122,13 @@ func (m *Mapper) FieldByName(v reflect.Value, name string) reflect.Value {
 	return FieldByIndexes(v, fieldInfo.Index)
 }
 
+func (sm StructMap) GetFiledByPath(path string) *FieldInfo{
+	return sm.Paths[path]
+}
+
+/**
+根据索引值获取字段的内容
+ */
 func FieldByIndexes(v reflect.Value, indexes []int) reflect.Value {
 	for _, i := range indexes {
 		//获取街机构体的字段
@@ -155,7 +166,7 @@ func parsePtrToElem(t reflect.Type) reflect.Type {
 /**
 使用函数进行字段名转换
 */
-func parseFiledName(filed reflect.StructField, tagName string, mapFunc, tagMapFunc filedMapFunc) (tag, fieldName string) {
+func ParseFiledName(filed reflect.StructField, tagName string, mapFunc, tagMapFunc filedMapFunc) (tag, fieldName string) {
 
 	//获取原始字段名
 	fieldName = filed.Name
@@ -179,7 +190,7 @@ func parseFiledName(filed reflect.StructField, tagName string, mapFunc, tagMapFu
 	return tag, fieldName
 }
 
-func parseOptions(tag string) map[string]string {
+func ParseOptions(tag string) map[string]string {
 	parts := strings.Split(tag, ",")
 	options := make(map[string]string, len(parts))
 	if len(parts) > 1 {
@@ -195,14 +206,14 @@ func parseOptions(tag string) map[string]string {
 	return options
 }
 
-func apnd(is []int, i int) []int {
+func Apnd(is []int, i int) []int {
 	x := make([]int, len(is)+1)
 	copy(x, is)
 	x[len(x)-1] = i
 	return x
 }
 
-func getMapping(fieldType reflect.Type, tagName string, mapFunc, tagMapFunc filedMapFunc) *StructMap {
+func GetMapping(fieldType reflect.Type, tagName string, mapFunc, tagMapFunc filedMapFunc) *StructMap {
 
 	fildInfoItem := []*FieldInfo{}
 
@@ -234,7 +245,7 @@ QueueLoop:
 			//根据索引获取所代表结构体上的字段
 			field := typeQueue.typeInfo.Field(filedIndex)
 			//进行字段名转换
-			tag, name := parseFiledName(field, tagName, mapFunc, tagMapFunc)
+			tag, name := ParseFiledName(field, tagName, mapFunc, tagMapFunc)
 			if name == "-" {
 				continue
 			}
@@ -242,7 +253,7 @@ QueueLoop:
 				Filed:   field,
 				Name:    name,
 				Zero:    reflect.New(field.Type),
-				Options: parseOptions(tag),
+				Options: ParseOptions(tag),
 			}
 
 			//如果没有父级字段直接取字段名。有的话按 父.子
@@ -277,7 +288,7 @@ QueueLoop:
 				(fieldInfo.Zero.Kind() == reflect.Ptr && fieldInfo.Zero.Type().Elem().Kind() == reflect.Struct) {
 				queue = append(queue, TypeQueue{parsePtrToElem(field.Type), &fieldInfo, fieldInfo.Path})
 			}
-			fieldInfo.Index = apnd(typeQueue.FieldInfo.Index, filedIndex)
+			fieldInfo.Index = Apnd(typeQueue.FieldInfo.Index, filedIndex)
 			fieldInfo.Parent = typeQueue.FieldInfo
 			typeQueue.FieldInfo.Children[filedIndex] = &fieldInfo
 			fildInfoItem = append(fildInfoItem, &fieldInfo)
