@@ -21,17 +21,17 @@ func NewTypeInfoCache() {
 
 func (c *TypeInfoCache) GetTypeInfoCache(key string) (TypeInfo, bool) {
 	c.RLock()
-	defer c.Unlock()
+	defer c.RUnlock()
 	value, ok := c.Items[key]
 	if ok {
 		return value, ok
 	}
-	return TypeInfo{}, false
+	return  value, false
 }
 
 func (c *TypeInfoCache) SetTypeInfoCache(key string, typeInfo TypeInfo) {
 	c.RLock()
-	defer c.Unlock()
+	defer c.RUnlock()
 	c.Items[key] = typeInfo
 }
 

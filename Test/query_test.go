@@ -25,6 +25,6 @@ func Test(t *testing.T) {
 		Model: User{},
 	}
 	 var userArray []User
-	query.Query("select * from t_user",userArray)
+	query.Query("select age,username from t_user",&userArray)
 	fmt.Print(userArray)
 }

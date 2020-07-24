@@ -2,10 +2,11 @@ package queryable
 
 import (
 	"database/sql"
-	"github.com/yoyofxteam/yoyo-reflect"
 	"github.com/yoyofxteam/yoyodata/cache"
 	"github.com/yoyofxteam/yoyodata/reflectx"
 	"reflect"
+	"sort"
+	"strings"
 )
 
 type Queryable struct {
@@ -13,8 +14,10 @@ type Queryable struct {
 	Model interface{}
 }
 
+/**
+执行不带参数化的SQL查询
+*/
 func (q *Queryable) Query(sql string, res interface{}) {
-
 	db, err := q.DB.CreateNewDbConn()
 	if err != nil {
 		panic(err)
@@ -23,44 +26,56 @@ func (q *Queryable) Query(sql string, res interface{}) {
 	if err != nil {
 		panic(err)
 	}
-	//校验数据类型是否一致
-	//agreementType(res, q.model)
-	//获取对象元数据
+	//获取返回值的原始数据类型
+	resElem := reflect.ValueOf(res).Elem()
+	if resElem.Kind() != reflect.Slice {
+		panic("value must be slice")
+	}
+	//获取对象完全限定名称和元数据
 	modelName := reflectx.GetTypeName(q.Model)
 	typeInfo := getTypeInfo(modelName, q.Model)
-	//获取数据库字段和类型字段键值对
+	//获取数据库字段和类型字段的对应关系键值对
 	columnFieldSlice := contrastColumnField(rows, typeInfo)
-	//获取要扫码的字段数组
+	//创建用于接受数据库返回值的字段变量对象
 	scanFieldArray := createScanFieldArray(columnFieldSlice)
-	//数据装配
-	resPtr := reflect.ValueOf(res).Elem()
 	resEleArray := make([]reflect.Value, 0)
+	//数据装配
 	for rows.Next() {
-		dataModel := Reflect.CreateInstancePtr(reflect.ValueOf(q.Model).Type())
+		//创建对象
+		dataModel := reflect.New(reflect.ValueOf(q.Model).Type()).Interface()
+		//接受数据库返回值
 		rows.Scan(scanFieldArray...)
-		resEle := setValue(&dataModel, scanFieldArray, columnFieldSlice)
-		resEleArray = append(resEleArray, reflect.ValueOf(resEle))
+		//为对象赋值
+		setValue(dataModel, scanFieldArray, columnFieldSlice)
+		resEleArray = append(resEleArray, reflect.ValueOf(dataModel).Elem())
 	}
-	val:= reflect.Append(resPtr,resEleArray...)
-	resPtr.Set(val)
+	//利用反射动态拼接切片
+	val := reflect.Append(resElem, resEleArray...)
+	resElem.Set(val)
 }
 
 /**
 数据库字段和类型字段键值对
 */
 type ColumnFieldKeyValue struct {
+	Index      int
 	ColumnName string
 	FieldInfo  cache.FieldInfo
 }
 
-func setValue(model *interface{}, data []interface{}, columnFieldSlice []ColumnFieldKeyValue) *interface{} {
-	modelVal := reflect.ValueOf(model)
+/**
+把数据库返回的值赋值到实体字段上
+*/
+func setValue(model interface{}, data []interface{}, columnFieldSlice []ColumnFieldKeyValue) {
+	modelVal := reflect.ValueOf(model).Elem()
 	for i, cf := range columnFieldSlice {
 		modelVal.Field(cf.FieldInfo.Index).Set(reflect.ValueOf(data[i]).Elem())
 	}
-	return model
 }
 
+/**
+创建接受数据库返回值的字段
+*/
 func createScanFieldArray(columnFieldSlice []ColumnFieldKeyValue) []interface{} {
 	var res []interface{}
 	for _, data := range columnFieldSlice {
@@ -76,12 +91,16 @@ func contrastColumnField(rows *sql.Rows, typeInfo cache.TypeInfo) []ColumnFieldK
 	var columnFieldSlice []ColumnFieldKeyValue
 	columns, _ := rows.Columns()
 	for _, field := range typeInfo.FieldInfo {
-		for _, column := range columns {
-			if column == field.FieldName {
-				columnFieldSlice = append(columnFieldSlice, ColumnFieldKeyValue{ColumnName: column, FieldInfo: field})
+		for i, column := range columns {
+			if strings.ToUpper(column) == strings.ToUpper(field.FieldName) {
+				columnFieldSlice = append(columnFieldSlice, ColumnFieldKeyValue{ColumnName: column, Index: i, FieldInfo: field})
 			}
 		}
 	}
+
+	sort.SliceStable(columnFieldSlice, func(i, j int) bool {
+		return columnFieldSlice[i].Index < columnFieldSlice[j].Index
+	})
 	return columnFieldSlice
 }
 

@@ -19,7 +19,7 @@ func ReflectTypeInfo(model interface{}) cache.TypeInfo {
 	var fieldInfoArray []cache.FieldInfo
 	for i := 0; i < modelValue.NumField(); i++ {
 		fieldValue := modelValue.Field(i)
-		if fieldValue.Elem().Kind() == reflect.Struct {
+		if fieldValue.Kind() == reflect.Struct {
 			continue
 		}
 		fieldType := modelType.Field(i)
