@@ -52,15 +52,61 @@ func (q *Queryable) Query(sql string, res interface{}) {
 	//利用反射动态拼接切片
 	val := reflect.Append(resElem, resEleArray...)
 	resElem.Set(val)
+	//查询完毕后关闭链接
+	db.Close()
+}
+
+func (q *Queryable) QueryByParams(sql string, res interface{},args ...interface{}) {
+
+	db, err := q.DB.CreateNewDbConn()
+	if err != nil {
+		panic(err)
+	}
+	stmt, err := db.Prepare(sql)
+	rows, err := stmt.Query(args...)
+	if err != nil {
+		panic(err)
+	}
+	//获取返回值的原始数据类型
+	resElem := reflect.ValueOf(res).Elem()
+	if resElem.Kind() != reflect.Slice {
+		panic("value must be slice")
+	}
+	//获取对象完全限定名称和元数据
+	modelName := reflectx.GetTypeName(q.Model)
+	typeInfo := getTypeInfo(modelName, q.Model)
+	//获取数据库字段和类型字段的对应关系键值对
+	columnFieldSlice := contrastColumnField(rows, typeInfo)
+	//创建用于接受数据库返回值的字段变量对象
+	scanFieldArray := createScanFieldArray(columnFieldSlice)
+	resEleArray := make([]reflect.Value, 0)
+	//数据装配
+	for rows.Next() {
+		//创建对象
+		dataModel := reflect.New(reflect.ValueOf(q.Model).Type()).Interface()
+		//接受数据库返回值
+		rows.Scan(scanFieldArray...)
+		//为对象赋值
+		setValue(dataModel, scanFieldArray, columnFieldSlice)
+		resEleArray = append(resEleArray, reflect.ValueOf(dataModel).Elem())
+	}
+	//利用反射动态拼接切片
+	val := reflect.Append(resElem, resEleArray...)
+	resElem.Set(val)
+	//查询完毕后关闭链接
+	db.Close()
 }
 
 /**
 数据库字段和类型字段键值对
 */
 type ColumnFieldKeyValue struct {
-	Index      int
+	//SQL字段顺序索引
+	Index int
+	//数据库列名
 	ColumnName string
-	FieldInfo  cache.FieldInfo
+	//数据库字段名
+	FieldInfo cache.FieldInfo
 }
 
 /**
@@ -74,7 +120,7 @@ func setValue(model interface{}, data []interface{}, columnFieldSlice []ColumnFi
 }
 
 /**
-创建接受数据库返回值的字段
+创建用于接受数据库数据的对应变量
 */
 func createScanFieldArray(columnFieldSlice []ColumnFieldKeyValue) []interface{} {
 	var res []interface{}
@@ -85,7 +131,7 @@ func createScanFieldArray(columnFieldSlice []ColumnFieldKeyValue) []interface{} 
 }
 
 /**
-获取SQL返回的字段名和实际数据类型字段的对比
+根据SQL查询语句中的字段找到结构体的对应字段，并且记录索引值，用于接下来根据索引值来进行对象的赋值
 */
 func contrastColumnField(rows *sql.Rows, typeInfo cache.TypeInfo) []ColumnFieldKeyValue {
 	var columnFieldSlice []ColumnFieldKeyValue
@@ -97,7 +143,7 @@ func contrastColumnField(rows *sql.Rows, typeInfo cache.TypeInfo) []ColumnFieldK
 			}
 		}
 	}
-
+	//把获取到的键值对按照SQL语句查询字段的顺序进行排序，否则会无法赋值
 	sort.SliceStable(columnFieldSlice, func(i, j int) bool {
 		return columnFieldSlice[i].Index < columnFieldSlice[j].Index
 	})
@@ -116,7 +162,7 @@ func agreementType(arr *[]interface{}, ele interface{}) {
 }
 
 /**
-获取元数据
+获取要查询的结构体的元数据
 */
 func getTypeInfo(key string, model interface{}) cache.TypeInfo {
 	typeInfo, ok := cache.TypeCache.GetTypeInfoCache(key)
