@@ -56,7 +56,10 @@ func (q *Queryable) Query(sql string, res interface{}) {
 	db.Close()
 }
 
-func (q *Queryable) QueryByParams(sql string, res interface{},args ...interface{}) {
+/**
+参数化查询
+*/
+func (q *Queryable) QueryByParams(sql string, res interface{}, args ...interface{}) {
 
 	db, err := q.DB.CreateNewDbConn()
 	if err != nil {
@@ -96,6 +99,7 @@ func (q *Queryable) QueryByParams(sql string, res interface{},args ...interface{
 	//查询完毕后关闭链接
 	db.Close()
 }
+
 
 /**
 数据库字段和类型字段键值对
@@ -169,5 +173,7 @@ func getTypeInfo(key string, model interface{}) cache.TypeInfo {
 	if !ok {
 		typeInfo = reflectx.GetTypeInfo(model)
 	}
+   sb:=	strings.Builder{}
+   s.WriteString("1")
 	return typeInfo
 }

@@ -78,3 +78,5 @@ func GetTypeName(model interface{}) string {
 	modelTypeName := modelType.PkgPath() + modelType.Name()
 	return modelTypeName
 }
+
+
